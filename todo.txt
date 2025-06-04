@@ -1,0 +1,39 @@
+This implementation includes:
+
+    Two branches:
+
+        HSI branch with 3 convolutional layers (1D convolutions) processing the spectral information
+
+        MSI branch with 3 convolutional layers (2D convolutions) processing spatial information
+
+    Fusion:
+
+        Features from both branches are flattened and concatenated
+
+        Three fully connected layers fuse the information and reconstruct the HR HSI spectrum
+
+    Parameters:
+
+        Follows the architecture described in Table 2 of the paper
+
+        HSI branch: 20 filters per layer, kernel size 45×1
+
+        MSI branch: 30 filters per layer, kernel size 10×10
+
+        FC layers: 450 neurons in first two layers, output size equals HSI bands
+
+    Input/Output:
+
+        Input: LR HSI spectrum and corresponding HR MSI patch
+
+        Output: Reconstructed HR HSI spectrum
+
+The example usage at the bottom demonstrates how to create the model and process sample inputs. You can adjust the hyperparameters (hsi_bands, msi_bands, patch_size) based on your specific dataset.
+
+Note that this is the core network architecture. For a complete implementation, you would also need to:
+
+    Add data loading/preprocessing code
+
+    Implement the training loop with the loss function described in the paper (Frobenius norm)
+
+    Add evaluation metrics (PSNR, SSIM, SAM, etc.)
