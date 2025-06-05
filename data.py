@@ -122,6 +122,16 @@ class ChikuseiDataset(torch.utils.data.Dataset):
     def gaussian_response(self, x, mean, sigma):
         norm = 1/(sigma*np.sqrt(2*np.pi))
         return norm*np.exp(-0.5*((x-mean)/sigma)**2)
+    
+
+class AvirisDataset(torch.utils.data.Dataset):
+
+    def __init__(self, full_image: np.array):
+        # charger les images ou pas ?
+        # fabriquer des batchs avec LRHSI, HRMSI et GT pour Aviris
+        # Supprimer les fréquences de la vapeur d'eau
+        pass
+
 
 
     
