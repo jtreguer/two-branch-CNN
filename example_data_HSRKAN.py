@@ -124,16 +124,6 @@ class ChikuseiDataset(torch.utils.data.Dataset):
         return norm*np.exp(-0.5*((x-mean)/sigma)**2)
     
 
-class AvirisDataset(torch.utils.data.Dataset):
-
-    def __init__(self, args):
-        # charger les images ou pas ?
-        # fabriquer des batchs avec LRHSI, HRMSI et GT pour Aviris
-        # Supprimer les fréquences de la vapeur d'eau
-        pass
-
-
-
     
 
 
