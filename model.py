@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class TwoBranchCNN(nn.Module):
-    def __init__(self, hsi_bands=162, msi_bands=6, patch_size=31):
+    def __init__(self, hsi_bands=224, msi_bands=4, patch_size=31):
         """
         Two-branch CNN for HSI-MSI fusion as described in the paper.
         
@@ -84,8 +84,8 @@ class TwoBranchCNN(nn.Module):
 # Example usage
 if __name__ == "__main__":
     # Hyperparameters from the paper
-    hsi_bands = 162  # Number of bands in HSI (AVIRIS data after removing noisy bands)
-    msi_bands = 6    # Number of bands in MSI (Landsat-7)
+    hsi_bands = 224 #162  # Number of bands in HSI (AVIRIS data after removing noisy bands)
+    msi_bands = 4    # Number of bands in MSI (Landsat-7)
     patch_size = 31   # Size of MSI patch
     
     # Create model

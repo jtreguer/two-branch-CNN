@@ -6,14 +6,18 @@ from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Dataset,DataLoader
 import os
 import logging
-from data import NPZDataset
 import numpy as np
-from utils import Metric,get_model_size,test_speed,beijing_time, set_logger,init_weights,set_seed
+from utils import Metric
 import argparse
-from models.KANFormer import KANFormer
+from model import TwoBranchCNN
 
 
 parse = argparse.ArgumentParser()
+
+parse.add_argument('--image_path', type=str, default='./images/')
+parse.add_argument('--image_number', type=int, default=1)
+
+
 
 parse.add_argument('--model', type=str,default='KANFormer')
 parse.add_argument('--log_out', type=int,default=0)
@@ -27,10 +31,6 @@ parse.add_argument('--seed', type=int,default=3407)
 parse.add_argument('--scale', type=int,default=4)
 parse.add_argument('--hidden_dim', type=int,default=256)
 parse.add_argument('--depth', type=int,default=4)
-parse.add_argument('--comments', type=str,default='')
-parse.add_argument('--grid_size', type=int,default=5)
-parse.add_argument('--spline_order', type=int,default=3)
-parse.add_argument('--datapath', type=str,default='./datasets/')
 
 args = parse.parse_args()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

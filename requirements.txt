@@ -4,4 +4,5 @@ matplotlib
 einops
 opencv-python
 rasterio
+spectral
 
