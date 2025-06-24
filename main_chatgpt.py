@@ -8,23 +8,19 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from torch.optim import Adam, SGD
 from torch.optim.lr_scheduler import StepLR
+from tqdm import tqdm
 
-from model import TwoBranchCNN                  # network definition :contentReference[oaicite:0]{index=0}
-from data import AvirisDataset                  # or replace with NPZDataset etc.
+from model import TwoBranchCNN
+from data import AvirisDataset                 
 
 # ------------------------- CLI arguments ------------------------- #
 def get_args():
     p = argparse.ArgumentParser(description="Two-branch CNN training")
     # data / io
-    p.add_argument("--image_path", type=str, default="/mnt/c/data/AVIRIS/",
-                   help="Root directory that contains AVIRIS scenes")
-    
-    p.add_argument("--srf_path", type=str,
-                   default="srf/Landsat8_BGRI_SRF.xls",
-                   help="Spectral response file (xls)")
-    p.add_argument('--image_number', type=int, default=4)
-    p.add_argument("--results_dir", type=str, default="runs",
-                   help="Where to store checkpoints & logs")
+    p.add_argument("--image_path", type=str, default="/mnt/c/data/AVIRIS/",help="Root directory that contains AVIRIS scenes")    
+    p.add_argument("--srf_path", type=str,default="srf/Landsat8_BGRI_SRF.xls",help="Spectral response file (xls)")
+    p.add_argument('--image_number', type=int, default=2)
+    p.add_argument("--results_dir", type=str, default="runs",help="Where to store checkpoints & logs")
     # training hyper-params
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--batch_size", type=int, default=128)
@@ -36,7 +32,7 @@ def get_args():
     p.add_argument("--seed", type=int, default=3407)
     # data specifics
     p.add_argument("--patch_size", type=int, default=31)
-    p.add_argument("--stride", type=int, default=15)
+    p.add_argument("--stride", type=int, default=31)
     p.add_argument("--training_ratio", type=float, default=0.7)
     p.add_argument('--scale', type=int, default=2)
     p.add_argument('--hsi_bands', type=int, default=224)   
@@ -128,7 +124,7 @@ def main():
     best_val = float("inf")
 
     # training loop ----------------------------------------------------------
-    for epoch in range(1, args.epochs + 1):
+    for epoch in tqdm(range(1, args.epochs + 1)):
         t0 = time.time()
         train_loss = train_one_epoch(model, train_loader, criterion,
                                      optimizer, device)

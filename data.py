@@ -10,6 +10,7 @@ import math
 import os
 import rasterio
 import spectral
+from tqdm import tqdm
 import xlrd
 
 
@@ -29,14 +30,16 @@ class AvirisDataset(torch.utils.data.Dataset):
         self.wavelengths = None #spaceholder for image spectral wavelenghts
         # load images
         self.image_path = args.image_path
-        self.image_list = self.get_image_list()[:self.args.image_number]
-        print(len(self.image_list))
+        self.image_list = self.get_image_list()
+        self.image_list = self.image_list[:min(self.args.image_number, len(self.image_list))]
+        print(f"Number of tiles {len(self.image_list)}")
         self.training_images_number = int(len(self.image_list)*self.args.training_ratio)
         self.image_ids = []
         self.GT_list = []
         self.HRMSI_list = []
         self.LRHSI_list = []
         self.make_set()
+        print("Dataset built")
         # Supprimer les fréquences de la vapeur d'eau ?
 
         # Make tensor lists
@@ -44,6 +47,7 @@ class AvirisDataset(torch.utils.data.Dataset):
         self.GT_tensor_list = self.make_cuda_tensor(self.GT_list, is_spectrum=True)
         self.LRHSI_tensor_list = self.make_cuda_tensor(self.LRHSI_list, is_spectrum=True)
         self.HRMSI_tensor_list = self.make_cuda_tensor(self.HRMSI_list)
+        print("Dataset loaded as tensors")
         pass
 
     def __getitem__(self, index):
@@ -75,18 +79,16 @@ class AvirisDataset(torch.utils.data.Dataset):
 
     def get_spectral_response(self):
         xls_path = self.args.srf_path
-        print(xls_path)
         if not os.path.exists(xls_path):
             raise Exception("Spectral response path does not exist!")
         data = xlrd.open_workbook(xls_path)
         srf = data.sheets()[0]
         srf_arr = np.array([srf.col_values(i) for i in range(srf.ncols)]).T
         sp_matrix = np.empty((len(self.wavelengths),srf.ncols-1),dtype=np.float32)
-        print(srf.ncols)
         for i in range(1,srf.ncols): # start from 1 to exclude 1st column = wavelengths
             sp_matrix[:,i-1] = np.interp(self.wavelengths, srf_arr[:,0], srf_arr[:,i],left=0, right=0)
-        print(f"sp_matrix.shape {sp_matrix.shape}")
-        print(f"Min and max of sp_matrix {np.min(sp_matrix / sp_matrix.sum(axis=0))}, {np.max(sp_matrix/ sp_matrix.sum(axis=0))}")
+        # print(f"sp_matrix.shape {sp_matrix.shape}")
+        # print(f"Min and max of sp_matrix {np.min(sp_matrix / sp_matrix.sum(axis=0))}, {np.max(sp_matrix/ sp_matrix.sum(axis=0))}")
         return sp_matrix / sp_matrix.sum(axis=0)
 
     def make_set(self):
@@ -110,6 +112,7 @@ class AvirisDataset(torch.utils.data.Dataset):
                 hyperspectral_data = rearrange(hyperspectral_data,'c h w -> h w c')
                 global_max = np.max(hyperspectral_data)
                 global_min = np.min(hyperspectral_data)
+                print(f"global min and max {global_min}, {global_max}")
 
                 header_spectral = spectral.open_image(image_header)
                 # Access the wavelengths associated with each band
@@ -117,7 +120,7 @@ class AvirisDataset(torch.utils.data.Dataset):
                 self.sp_matrix = self.get_spectral_response()
 
                 print(f"Number of patches {patch_number}")
-                for i in range(patch_number):
+                for i in tqdm(range(patch_number)):
                     j = math.floor(i / p_col)
                     k = i % p_col
                     patch = hyperspectral_data[start_row+j*s:start_row+j*s+p,start_col+k*s:start_col+k*s+p,:]
@@ -127,10 +130,7 @@ class AvirisDataset(torch.utils.data.Dataset):
                     patch_msi = self.make_msi(patch)
                     HRMSI_list.append(patch_msi)
                     patch_hsi = self.make_hsi(patch)
-                    print(patch_hsi.shape)
                     patch_hsi = self.upscale_hyperspectral(patch_hsi, method='bicubic')
-                    print(patch_hsi.shape)
-                    exit()
                     lr_spec  = patch_hsi[centre, centre, :]
                     LRHSI_list.append(lr_spec)
                     self.image_ids.append(image_id) # record from which image the sample comes from

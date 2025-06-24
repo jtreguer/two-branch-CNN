@@ -3,6 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class TwoBranchCNN(nn.Module):
+
+    padding = 'valid' # 22 et 5 "same"
+
     def __init__(self, hsi_bands=224, msi_bands=4, patch_size=31):
         """
         Two-branch CNN for HSI-MSI fusion as described in the paper.
@@ -15,22 +18,24 @@ class TwoBranchCNN(nn.Module):
         super(TwoBranchCNN, self).__init__()
         
         # HSI branch parameters (1D convolutions)
+        self.kernel_1D_size = 45
         self.hsi_branch = nn.Sequential(
-            nn.Conv1d(1, 20, kernel_size=45, stride=1, padding=22),  # kernel_size=45x1 # CHECK PADDING !!!
+            nn.Conv1d(1, 20, kernel_size=self.kernel_1D_size, stride=1, padding=self.padding),  # kernel_size=45x1 # CHECK PADDING !!!
             nn.ReLU(),
-            nn.Conv1d(20, 20, kernel_size=45, stride=1, padding=22),
+            nn.Conv1d(20, 20, kernel_size=self.kernel_1D_size, stride=1, padding=self.padding),
             nn.ReLU(),
-            nn.Conv1d(20, 20, kernel_size=45, stride=1, padding=22),
+            nn.Conv1d(20, 20, kernel_size=self.kernel_1D_size, stride=1, padding=self.padding),
             nn.ReLU()
         )
         
         # MSI branch parameters (2D convolutions)
+        self.kernel_2D_size = 10
         self.msi_branch = nn.Sequential(
-            nn.Conv2d(msi_bands, 30, kernel_size=10, stride=1, padding=5),  # kernel_size=10x10 # CHECK PADDING !!!
+            nn.Conv2d(msi_bands, 30, kernel_size=self.kernel_2D_size, stride=1, padding=self.padding),  # kernel_size=10x10 # CHECK PADDING !!!
             nn.ReLU(),
-            nn.Conv2d(30, 30, kernel_size=10, stride=1, padding=5),
+            nn.Conv2d(30, 30, kernel_size=self.kernel_2D_size, stride=1, padding=self.padding),
             nn.ReLU(),
-            nn.Conv2d(30, 30, kernel_size=10, stride=1, padding=5),
+            nn.Conv2d(30, 30, kernel_size=self.kernel_2D_size, stride=1, padding=self.padding),
             nn.ReLU()
         )
         
@@ -43,8 +48,10 @@ class TwoBranchCNN(nn.Module):
         self.msi_flatten = nn.Flatten()
         
         # Fully connected layers
+        self.input_layer_size = 20 * (hsi_bands - 3*(self.kernel_1D_size - 1)) + 30 * (patch_size - 3*(self.kernel_2D_size-1))**2
+        print(f"size of input layer of FC {self.input_layer_size}")
         self.fc_layers = nn.Sequential(
-            nn.Linear(20 * hsi_bands + 30 * patch_size * patch_size, 450),
+            nn.Linear(self.input_layer_size, 450),
             nn.ReLU(),
             nn.Linear(450, 450),
             nn.ReLU(),
@@ -65,17 +72,22 @@ class TwoBranchCNN(nn.Module):
         # Add channel dimension if not present (batch_size, hsi_bands) -> (batch_size, 1, hsi_bands)
         if hsi_input.dim() == 2:
             hsi_input = hsi_input.unsqueeze(1)
-            
+
         hsi_features = self.hsi_branch(hsi_input)
+        # print(f"hsi features 1 {hsi_features.shape}")
         hsi_features = self.hsi_flatten(hsi_features)
-        
+        # print("hsi features 2")
         # Process MSI input
         msi_features = self.msi_branch(msi_input)
+        # print(f"msi features 1 {msi_features.shape}")
         msi_features = self.msi_flatten(msi_features)
+        # print("msi features 2")
+        # print(f"features shape {hsi_features.shape}, {msi_features.shape}")
         
         # Concatenate features
         combined_features = torch.cat((hsi_features, msi_features), dim=1)
-        
+        # print(f"combined features shape {combined_features.shape}")
+
         # Fully connected layers
         output = self.fc_layers(combined_features)
         
