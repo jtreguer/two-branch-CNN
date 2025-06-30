@@ -31,6 +31,7 @@ class AvirisDataset(torch.utils.data.Dataset):
         # load images
         self.image_path = args.image_path
         self.image_list = self.get_image_list()
+        print(len(self.image_list))
         self.image_list = self.image_list[:min(self.args.image_number, len(self.image_list))]
         print(f"Number of tiles {len(self.image_list)}")
         self.training_images_number = int(len(self.image_list)*self.args.training_ratio)
@@ -38,16 +39,20 @@ class AvirisDataset(torch.utils.data.Dataset):
         self.GT_list = []
         self.HRMSI_list = []
         self.LRHSI_list = []
-        self.make_set()
-        print("Dataset built")
-        # Supprimer les fréquences de la vapeur d'eau ?
+        self.test_GT_list = []
+        self.test_HRMSI_list = []
+        self.test_LRHSI_list = []
+        if self.args.train_mode:
+            self.make_set()
+            print("Dataset built")
+            # Supprimer les fréquences de la vapeur d'eau ?
 
-        # Make tensor lists
-        # In c h w order for the model to digest  
-        self.GT_tensor_list = self.make_cuda_tensor(self.GT_list, is_spectrum=True)
-        self.LRHSI_tensor_list = self.make_cuda_tensor(self.LRHSI_list, is_spectrum=True)
-        self.HRMSI_tensor_list = self.make_cuda_tensor(self.HRMSI_list)
-        print("Dataset loaded as tensors")
+            # Make tensor lists
+            # In c h w order for the model to digest  
+            self.GT_tensor_list = self.make_cuda_tensor(self.GT_list, is_spectrum=True)
+            self.LRHSI_tensor_list = self.make_cuda_tensor(self.LRHSI_list, is_spectrum=True)
+            self.HRMSI_tensor_list = self.make_cuda_tensor(self.HRMSI_list)
+            print("Dataset loaded as tensors")
         pass
 
     def __getitem__(self, index):
@@ -59,7 +64,8 @@ class AvirisDataset(torch.utils.data.Dataset):
     def make_cuda_tensor(self, arr_list, is_spectrum=False):
         tensor_list = []
         for arr in arr_list:
-            if is_spectrum:                       # (c,) → (1,c) and no HWC→CHW swap
+            if is_spectrum:
+                # continue                     # (c,) → (1,c) and no HWC→CHW swap
                 tensor = torch.from_numpy(arr).float().unsqueeze(0)
             else:                                 # (H,W,C) → (C,H,W)
                 arr = rearrange(arr,'h w c-> c h w')
@@ -95,9 +101,6 @@ class AvirisDataset(torch.utils.data.Dataset):
         p = self.args.patch_size
         s = self.args.stride
         centre = self.args.patch_size // 2   
-        GT_list = []
-        HRMSI_list = []
-        LRHSI_list = []
         for image_id, image_header in enumerate(self.image_list):
             image_name = image_header[:-4]
             with rasterio.open(image_name) as src:
@@ -109,36 +112,55 @@ class AvirisDataset(torch.utils.data.Dataset):
                 c , h, w = hyperspectral_data.shape
                 p_row, p_col, start_row, start_col= self.compute_patch_number(h, w)
                 patch_number = p_row * p_col
+                print(f"Number of patches {patch_number}")
                 hyperspectral_data = rearrange(hyperspectral_data,'c h w -> h w c')
                 global_max = np.max(hyperspectral_data)
                 global_min = np.min(hyperspectral_data)
                 print(f"global min and max {global_min}, {global_max}")
-
                 header_spectral = spectral.open_image(image_header)
                 # Access the wavelengths associated with each band
                 self.wavelengths = header_spectral.bands.centers
                 self.sp_matrix = self.get_spectral_response()
 
-                print(f"Number of patches {patch_number}")
+
                 for i in tqdm(range(patch_number)):
                     j = math.floor(i / p_col)
                     k = i % p_col
                     patch = hyperspectral_data[start_row+j*s:start_row+j*s+p,start_col+k*s:start_col+k*s+p,:]
                     # NORMALIZATION at IMAGE LEVEL
                     patch = self.normalize_image(patch,global_min=global_min, global_max=global_max)
-                    GT_list.append(patch[centre, centre,:])
+                    self.GT_list.append(patch[centre, centre,:])
                     patch_msi = self.make_msi(patch)
-                    HRMSI_list.append(patch_msi)
+                    self.HRMSI_list.append(patch_msi)
                     patch_hsi = self.make_hsi(patch)
                     patch_hsi = self.upscale_hyperspectral(patch_hsi, method='bicubic')
                     lr_spec  = patch_hsi[centre, centre, :]
-                    LRHSI_list.append(lr_spec)
+                    self.LRHSI_list.append(lr_spec)
                     self.image_ids.append(image_id) # record from which image the sample comes from
-
-        self.GT_list = GT_list
-        self.HRMSI_list = HRMSI_list
-        self.LRHSI_list = LRHSI_list
         return
+    
+    def make_test_set(self, test_image_ids):
+        for image_id, image_header in enumerate(self.image_list):
+            if image_id in test_image_ids:
+                image_name = image_header[:-4]
+                with rasterio.open(image_name) as src:
+                    print(f"Reading HS data from {image_name}")
+                    hyperspectral_data = src.read()
+                    # Display information about the hyperspectral data
+                    print('Shape of hyperspectral data:', hyperspectral_data.shape)
+                    print('Number of bands:', src.count)
+                    c , h, w = hyperspectral_data.shape
+                    hyperspectral_data = rearrange(hyperspectral_data,'c h w -> h w c')
+                    global_max = np.max(hyperspectral_data)
+                    global_min = np.min(hyperspectral_data)
+                    header_spectral = spectral.open_image(image_header)
+                    self.wavelengths = header_spectral.bands.centers
+                    self.sp_matrix = self.get_spectral_response()
+                    hyperspectral_data = self.normalize_image(hyperspectral_data,global_min=global_min, global_max=global_max)
+                    self.test_GT_list.append(hyperspectral_data)
+                    self.test_HRMSI_list.append(self.make_msi(hyperspectral_data))
+                    self.test_LRHSI_list.append(self.make_hsi(hyperspectral_data))
+        return self.test_GT_list, self.test_HRMSI_list, self.test_LRHSI_list
 
     def make_msi(self, img):
         (h, w, c) = img.shape
@@ -392,16 +414,19 @@ if __name__ == "__main__":
     parse.add_argument('--image_path', type=str, default='/mnt/c/data/AVIRIS/')
     parse.add_argument('--image_number', type=int, default=1)
     parse.add_argument('--patch_size', type=int, default=31)
-    parse.add_argument('--stride', type=int, default=15)
+    parse.add_argument('--stride', type=int, default=31)
     parse.add_argument('--training_ratio', type=int, default=0.7)
     parse.add_argument('--training_set', type=bool, default=True)
     parse.add_argument('--scale', type=int, default=2)   
     parse.add_argument('--srf_path', type=str, default='srf/Landsat8_BGRI_SRF.xls')
+    parse.add_argument('--train_mode', type=int, default=True)  
 
     args = args = parse.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     training_set = AvirisDataset(args,device=device)
+    print(training_set.GT_tensor_list[0].shape, training_set.GT_list[0].shape)
+    print(training_set.HRMSI_tensor_list[0].shape, training_set.LRHSI_tensor_list[0].shape)
     # print(toto.get_image_list())
     # toto.test_resolutions()
 

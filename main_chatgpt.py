@@ -1,7 +1,9 @@
 # train_loop.py
 import argparse
+import json
 import numpy as np
 import os
+import pickle
 import time
 import torch
 import torch.nn as nn
@@ -19,7 +21,7 @@ def get_args():
     # data / io
     p.add_argument("--image_path", type=str, default="/mnt/c/data/AVIRIS/",help="Root directory that contains AVIRIS scenes")    
     p.add_argument("--srf_path", type=str,default="srf/Landsat8_BGRI_SRF.xls",help="Spectral response file (xls)")
-    p.add_argument('--image_number', type=int, default=2)
+    p.add_argument('--image_number', type=int, default=4)
     p.add_argument("--results_dir", type=str, default="runs",help="Where to store checkpoints & logs")
     # training hyper-params
     p.add_argument("--epochs", type=int, default=200)
@@ -38,7 +40,8 @@ def get_args():
     p.add_argument('--hsi_bands', type=int, default=224)   
     p.add_argument('--msi_bands', type=int, default=4)  
     p.add_argument('--num_workers', type=int, default=4)
-    p.add_argument('--optimizer', type=str, default='Adam')  
+    p.add_argument('--optimizer', type=str, default='Adam')
+    p.add_argument('--train_mode', type=bool, default=True)
     return p.parse_args()
 
 # ------------------------- utilities ------------------------- #
@@ -86,6 +89,10 @@ def main():
     num_training   = full_dataset.training_images_number
     rng = np.random.default_rng(args.seed)
     train_tile_ids = set(rng.choice(num_tiles, num_training, replace=False).tolist())
+    # Save image indices selected for training
+    with open("selected_for_training.pkl", "wb") as f:
+        pickle.dump(train_tile_ids, f)
+
     train_idx, val_idx = [], []
     for sample_idx, tile_id in enumerate(full_dataset.image_ids):
         if tile_id in train_tile_ids:
@@ -123,12 +130,17 @@ def main():
     os.makedirs(args.results_dir, exist_ok=True)
     best_val = float("inf")
 
+    hist_loss = []
+    hist_val_loss = []
+    history = {"hist_loss": hist_loss, "hist_val_loss": hist_val_loss}
     # training loop ----------------------------------------------------------
     for epoch in tqdm(range(1, args.epochs + 1)):
         t0 = time.time()
         train_loss = train_one_epoch(model, train_loader, criterion,
                                      optimizer, device)
         val_loss   = validate(model, val_loader, criterion, device)
+        history["hist_loss"].append(train_loss)
+        history["hist_val_loss"].append(val_loss)
         scheduler.step()
 
         # logging
@@ -150,6 +162,9 @@ def main():
                 "scheduler_state": scheduler.state_dict(),
                 "val_loss": best_val
             }, ckpt_path)
+
+    with open("hist_loss.json", "w") as file:
+        json.dump(history, file, indent=4)
 
 if __name__ == "__main__":
     main()

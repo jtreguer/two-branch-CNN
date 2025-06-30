@@ -16,6 +16,8 @@ class TwoBranchCNN(nn.Module):
             patch_size (int): Size of the MSI patch (default 31x31 as in paper)
         """
         super(TwoBranchCNN, self).__init__()
+
+        self.patch_size = patch_size
         
         # HSI branch parameters (1D convolutions)
         self.kernel_1D_size = 45

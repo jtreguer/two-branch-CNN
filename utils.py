@@ -126,17 +126,6 @@ def init_weights(self):
             if m.bias is not None:
                 init.constant_(m.bias, 0)
 
-def beijing_time():
-    utc_now = datetime.utcnow().replace(tzinfo=timezone.utc)
-    SHA_TZ = timezone(
-        timedelta(hours=8),
-        name='Asia/Shanghai',
-    )
-    beijing_now = utc_now.astimezone(SHA_TZ)
-    fmt = '%Y-%m-%d,%H:%M:%S'
-    now_fmt=beijing_now.strftime(fmt)
-    return  now_fmt
-
 def set_seed(seed=9999):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
