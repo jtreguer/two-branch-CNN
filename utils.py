@@ -15,8 +15,8 @@ import os
 import shutil
 import time
 from skimage.metrics import structural_similarity
-from thop import profile
-from thop import clever_format
+# from thop import profile
+# from thop import clever_format
 import shutil
 
 class Metric():

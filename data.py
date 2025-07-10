@@ -8,13 +8,13 @@ import matplotlib.pyplot as plt #DEBUG
 import argparse
 import math
 import os
+import pickle
 import rasterio
 import spectral
 from tqdm import tqdm
 import xlrd
+from skimage.transform import resize
 
-
-    
 
 class AvirisDataset(torch.utils.data.Dataset):
 
@@ -34,7 +34,7 @@ class AvirisDataset(torch.utils.data.Dataset):
         print(len(self.image_list))
         self.image_list = self.image_list[:min(self.args.image_number, len(self.image_list))]
         print(f"Number of tiles {len(self.image_list)}")
-        self.training_images_number = int(len(self.image_list)*self.args.training_ratio)
+        self.training_images_number = math.ceil(len(self.image_list)*self.args.training_ratio)
         self.image_ids = []
         self.GT_list = []
         self.HRMSI_list = []
@@ -46,14 +46,16 @@ class AvirisDataset(torch.utils.data.Dataset):
             self.make_set()
             print("Dataset built")
             # Supprimer les fréquences de la vapeur d'eau ?
-
             # Make tensor lists
             # In c h w order for the model to digest  
             self.GT_tensor_list = self.make_cuda_tensor(self.GT_list, is_spectrum=True)
             self.LRHSI_tensor_list = self.make_cuda_tensor(self.LRHSI_list, is_spectrum=True)
             self.HRMSI_tensor_list = self.make_cuda_tensor(self.HRMSI_list)
             print("Dataset loaded as tensors")
-        pass
+        else:
+            print("Making test dataset")
+            self.make_test_set()
+            print("Test dataset built")
 
     def __getitem__(self, index):
           return self.GT_tensor_list[index], self.LRHSI_tensor_list[index], self.HRMSI_tensor_list[index]
@@ -112,35 +114,45 @@ class AvirisDataset(torch.utils.data.Dataset):
                 c , h, w = hyperspectral_data.shape
                 p_row, p_col, start_row, start_col= self.compute_patch_number(h, w)
                 patch_number = p_row * p_col
-                print(f"Number of patches {patch_number}")
+                print(f"Maximum number of patches {patch_number}")
                 hyperspectral_data = rearrange(hyperspectral_data,'c h w -> h w c')
-                global_max = np.max(hyperspectral_data)
-                global_min = np.min(hyperspectral_data)
+                valid_pixels = hyperspectral_data[hyperspectral_data >= 0]
+                global_max = np.max(valid_pixels)
+                global_min = np.min(valid_pixels)
                 print(f"global min and max {global_min}, {global_max}")
                 header_spectral = spectral.open_image(image_header)
                 # Access the wavelengths associated with each band
                 self.wavelengths = header_spectral.bands.centers
                 self.sp_matrix = self.get_spectral_response()
-
+                patch_count = 0
 
                 for i in tqdm(range(patch_number)):
                     j = math.floor(i / p_col)
                     k = i % p_col
                     patch = hyperspectral_data[start_row+j*s:start_row+j*s+p,start_col+k*s:start_col+k*s+p,:]
-                    # NORMALIZATION at IMAGE LEVEL
-                    patch = self.normalize_image(patch,global_min=global_min, global_max=global_max)
-                    self.GT_list.append(patch[centre, centre,:])
-                    patch_msi = self.make_msi(patch)
-                    self.HRMSI_list.append(patch_msi)
-                    patch_hsi = self.make_hsi(patch)
-                    patch_hsi = self.upscale_hyperspectral(patch_hsi, method='bicubic')
-                    lr_spec  = patch_hsi[centre, centre, :]
-                    self.LRHSI_list.append(lr_spec)
-                    self.image_ids.append(image_id) # record from which image the sample comes from
+                    if (patch == -50).any(): # exclude non valid pixels
+                        continue
+                    else:
+                        # NORMALIZATION at IMAGE LEVEL
+                        patch = self.normalize_image(patch,global_min=global_min, global_max=global_max)
+                        self.GT_list.append(patch[centre, centre,:])
+                        patch_msi = self.make_msi(patch)
+                        self.HRMSI_list.append(patch_msi)
+                        patch_hsi = self.make_hsi(patch)
+                        patch_hsi = self.upscale_hyperspectral(patch_hsi, method='bicubic')
+                        lr_spec  = patch_hsi[centre, centre, :]
+                        self.LRHSI_list.append(lr_spec)
+                        self.image_ids.append(image_id) # record from which image the sample comes from
+                        patch_count += 1
+                print(f"Effective number of patches extracted from current last tile {patch_count}")
+                print(f"Total number of patches extracted {len(self.GT_list)}")
         return
     
-    def make_test_set(self, test_image_ids):
-        for image_id, image_header in enumerate(self.image_list):
+    def make_test_set(self):
+        with open('selected_for_training.pkl','rb') as f:
+            selected = pickle.load(f)
+        test_image_ids = [i for i in range(self.args.image_number) if i not in selected]
+        for image_id, image_header in tqdm(enumerate(self.image_list)):
             if image_id in test_image_ids:
                 image_name = image_header[:-4]
                 with rasterio.open(image_name) as src:
@@ -151,8 +163,9 @@ class AvirisDataset(torch.utils.data.Dataset):
                     print('Number of bands:', src.count)
                     c , h, w = hyperspectral_data.shape
                     hyperspectral_data = rearrange(hyperspectral_data,'c h w -> h w c')
-                    global_max = np.max(hyperspectral_data)
-                    global_min = np.min(hyperspectral_data)
+                    valid_pixels = hyperspectral_data[hyperspectral_data >= 0]
+                    global_max = np.max(valid_pixels)
+                    global_min = np.min(valid_pixels)
                     header_spectral = spectral.open_image(image_header)
                     self.wavelengths = header_spectral.bands.centers
                     self.sp_matrix = self.get_spectral_response()
@@ -211,30 +224,44 @@ class AvirisDataset(torch.utils.data.Dataset):
     
     def make_hsi(self, img):
         # Gaussian blur, 3x3 kernel, then scale reduction
+        method = cv2.INTER_AREA #cv2.INTER_AREA not supported with more than 4 channels, cv2.INTER_LINEAR?
         blurred_hs = GaussianBlur(img,(3,3),sigmaX=self.sigma, borderType=0)
         blurred_hs_normalized = np.empty(blurred_hs.shape, dtype=blurred_hs.dtype)
         # Normalization by channel - Global normalization?
         for j in range(len(self.wavelengths)):
             blurred_hs_normalized[:,:,j] = cv2.normalize(blurred_hs[:,:,j],None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-        # Downsampling    
-        lr_hsi =cv2.resize(blurred_hs_normalized,(self.subres,self.subres),interpolation=cv2.INTER_NEAREST)
+        # Downsampling   
+        if self.args.train_mode:
+            if method == cv2.INTER_LINEAR:
+                lr_hsi = cv2.resize(blurred_hs_normalized,dsize=(self.subres,self.subres),interpolation=method)
+            else: # use no aliasing alternative to cv2.INTER_AREA from skimage
+                lr_hsi = resize(blurred_hs_normalized, (self.subres, self.subres, blurred_hs_normalized.shape[2]), \
+                        anti_aliasing=True, preserve_range=True).astype(blurred_hs_normalized.dtype)                
+        else:
+            if method == cv2.INTER_LINEAR:
+                lr_hsi = cv2.resize(blurred_hs_normalized,None,fx=1/self.args.scale,fy=1/self.args.scale,interpolation=method)
+            else:
+                h, w, c = blurred_hs_normalized.shape
+                new_h = int(h / self.args.scale)
+                new_w = int(w / self.args.scale)
+                lr_hsi = resize(blurred_hs_normalized, (new_h, new_w, c), \
+                        anti_aliasing=True, preserve_range=True).astype(blurred_hs_normalized.dtype)   
         return lr_hsi
     
 
-    
     def upscale_hyperspectral(self, img: np.ndarray, method: str = 'bicubic') -> np.ndarray:
         """
         Upscales a hyperspectral image spatially using bilinear or bicubic interpolation.
         
         Parameters:
-            img (np.ndarray): Hyperspectral image of shape (bands, height, width).
+            img (np.ndarray): Hyperspectral image of shape (height, width, bands).
             scale (int): Upscaling factor (e.g., 4).
             method (str): Interpolation method: 'bilinear' or 'bicubic'.
             
         Returns:
-            np.ndarray: Upscaled hyperspectral image of shape (bands, height*scale, width*scale).
+            np.ndarray: Upscaled hyperspectral image of shape (height*scale, width*scale, bands).
         """
-        assert img.ndim == 3, "Input image must have shape (bands, height, width)"
+        assert img.ndim == 3, "HxWxC"
         assert method in ['bilinear', 'bicubic'], "Method must be 'bilinear' or 'bicubic'"
         
         interp = cv2.INTER_LINEAR if method == 'bilinear' else cv2.INTER_CUBIC

@@ -24,9 +24,9 @@ def get_args():
     p.add_argument('--image_number', type=int, default=4)
     p.add_argument("--results_dir", type=str, default="runs",help="Where to store checkpoints & logs")
     # training hyper-params
-    p.add_argument("--epochs", type=int, default=200)
+    p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch_size", type=int, default=128)
-    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--lr", type=float, default=5e-5)
     p.add_argument("--step_size", type=int, default=100,
                    help="LR scheduler step")
     p.add_argument("--gamma", type=float, default=0.1,
@@ -34,12 +34,12 @@ def get_args():
     p.add_argument("--seed", type=int, default=3407)
     # data specifics
     p.add_argument("--patch_size", type=int, default=31)
-    p.add_argument("--stride", type=int, default=31)
+    p.add_argument("--stride", type=int, default=31) # 31 means no overlapping between patches
     p.add_argument("--training_ratio", type=float, default=0.7)
     p.add_argument('--scale', type=int, default=2)
     p.add_argument('--hsi_bands', type=int, default=224)   
     p.add_argument('--msi_bands', type=int, default=4)  
-    p.add_argument('--num_workers', type=int, default=4)
+    p.add_argument('--num_workers', type=int, default=8)
     p.add_argument('--optimizer', type=str, default='Adam')
     p.add_argument('--train_mode', type=bool, default=True)
     return p.parse_args()
@@ -59,7 +59,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
     for gt, lr_hsi, hr_msi in loader:
         gt, lr_hsi, hr_msi = gt.to(device), lr_hsi.to(device), hr_msi.to(device)
         pred = model(lr_hsi, hr_msi)
-        loss = criterion(pred, gt)
+        loss = criterion(pred, gt.squeeze(1)) # input, target
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -73,7 +73,7 @@ def validate(model, loader, criterion, device):
     for gt, lr_hsi, hr_msi in loader:
         gt, lr_hsi, hr_msi = gt.to(device), lr_hsi.to(device), hr_msi.to(device)
         pred = model(lr_hsi, hr_msi)
-        loss = criterion(pred, gt)
+        loss = criterion(pred, gt.squeeze(1)) # input, target
         val_loss += loss.item() * gt.size(0)
     return val_loss / len(loader.dataset)
 
@@ -81,14 +81,18 @@ def main():
     args = get_args()
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
+    assert device.type == 'cuda', "Warning: CUDA not being used. Check torch installation and availability of GPU."
+    torch.backends.cudnn.benchmark = True
 
     # dataset & loaders -------------------------------------------------------
     full_dataset = AvirisDataset(args, device=device)
     print(f" Full dataset size {len(full_dataset)}")
     num_tiles      = len(full_dataset.image_list)
     num_training   = full_dataset.training_images_number
-    rng = np.random.default_rng(args.seed)
+    rng = np.random.default_rng(args.seed) # no seed for randomness
     train_tile_ids = set(rng.choice(num_tiles, num_training, replace=False).tolist())
+    print(f"Number of images {num_tiles}, number of images for training {num_training}, training image ids {train_tile_ids}")
     # Save image indices selected for training
     with open("selected_for_training.pkl", "wb") as f:
         pickle.dump(train_tile_ids, f)
@@ -138,7 +142,9 @@ def main():
         t0 = time.time()
         train_loss = train_one_epoch(model, train_loader, criterion,
                                      optimizer, device)
+        torch.cuda.empty_cache()
         val_loss   = validate(model, val_loader, criterion, device)
+        torch.cuda.empty_cache()
         history["hist_loss"].append(train_loss)
         history["hist_val_loss"].append(val_loss)
         scheduler.step()
@@ -154,7 +160,7 @@ def main():
         if val_loss < best_val:
             best_val = val_loss
             ckpt_path = os.path.join(args.results_dir,
-                                     f"best_epoch{epoch:03d}_{val_loss:.4f}.pt")
+                                     f"best_epoch{epoch:03d}.pt")
             save_checkpoint({
                 "epoch": epoch,
                 "model_state": model.state_dict(),

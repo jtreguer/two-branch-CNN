@@ -53,10 +53,15 @@ class TwoBranchCNN(nn.Module):
         self.input_layer_size = 20 * (hsi_bands - 3*(self.kernel_1D_size - 1)) + 30 * (patch_size - 3*(self.kernel_2D_size-1))**2
         print(f"size of input layer of FC {self.input_layer_size}")
         self.fc_layers = nn.Sequential(
+            nn.Dropout(p=0.3),
             nn.Linear(self.input_layer_size, 450),
+            nn.BatchNorm1d(450),
             nn.ReLU(),
+            nn.Dropout(p=0.3),
             nn.Linear(450, 450),
+            nn.BatchNorm1d(450),
             nn.ReLU(),
+            nn.Dropout(p=0.3),
             nn.Linear(450, hsi_bands))  # Output is the reconstructed HR HSI spectrum
         
     def forward(self, hsi_input, msi_input):
