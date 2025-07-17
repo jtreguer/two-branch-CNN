@@ -14,6 +14,7 @@ import spectral
 from tqdm import tqdm
 import xlrd
 from skimage.transform import resize
+from utils import max_inner_rectangle
 
 
 class AvirisDataset(torch.utils.data.Dataset):
@@ -111,15 +112,17 @@ class AvirisDataset(torch.utils.data.Dataset):
                 # Display information about the hyperspectral data
                 print('Shape of hyperspectral data:', hyperspectral_data.shape)
                 print('Number of bands:', src.count)
-                c , h, w = hyperspectral_data.shape
-                p_row, p_col, start_row, start_col= self.compute_patch_number(h, w)
-                patch_number = p_row * p_col
-                print(f"Maximum number of patches {patch_number}")
                 hyperspectral_data = rearrange(hyperspectral_data,'c h w -> h w c')
-                valid_pixels = hyperspectral_data[hyperspectral_data >= 0]
+                x, y, w, h = max_inner_rectangle(hyperspectral_data,-50) # Inner rectangle excluding -50
+                valid_pixels = hyperspectral_data[y:y+h,x:x+w,:]
+                print(f"Cropped image shape {valid_pixels.shape}")
                 global_max = np.max(valid_pixels)
                 global_min = np.min(valid_pixels)
                 print(f"global min and max {global_min}, {global_max}")
+                c = valid_pixels.shape[-1]
+                p_row, p_col, start_row, start_col= self.compute_patch_number(h, w)
+                patch_number = p_row * p_col
+                print(f"Maximum number of patches {patch_number}")
                 header_spectral = spectral.open_image(image_header)
                 # Access the wavelengths associated with each band
                 self.wavelengths = header_spectral.bands.centers
@@ -130,7 +133,7 @@ class AvirisDataset(torch.utils.data.Dataset):
                     j = math.floor(i / p_col)
                     k = i % p_col
                     patch = hyperspectral_data[start_row+j*s:start_row+j*s+p,start_col+k*s:start_col+k*s+p,:]
-                    if (patch == -50).any(): # exclude non valid pixels
+                    if 0:#(patch == -50).any(): # exclude non valid pixels
                         continue
                     else:
                         # NORMALIZATION at IMAGE LEVEL

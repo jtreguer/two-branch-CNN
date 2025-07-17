@@ -189,6 +189,48 @@ def load_checkpoint(checkpoint: str, model, optimizer, scheduler):
     # model.load_state_dict(cp['net'],strict=False)  
     optimizer.load_state_dict(cp['optimizer']) 
     scheduler.load_state_dict(cp['scheduler'])
-    start_epoch = cp['epoch']+1  
+    start_epoch = cp['epoch']+1
+
+def max_inner_rectangle(hsi_image: np.ndarray, invalid_value: float = -50):
+    """
+    Extract the largest inner rectangle with no unobserved pixels from a hyperspectral image.
+    
+    Args:
+        hsi_image (np.ndarray): Hyperspectral image (H, W, C)
+        invalid_value (float): Value indicating unobserved pixels
+        
+    Returns:
+        tuple: (x, y, w, h) of the largest valid rectangle
+    """
+    # Use the first band to detect unobserved pixels (or min across bands)
+    mask = np.all(hsi_image != invalid_value, axis=2).astype(np.uint8)
+    
+    # Convert binary mask to a form suitable for the algorithm
+    height, width = mask.shape
+    max_area = 0
+    max_rect = (0, 0, 0, 0)
+    hist = np.zeros(width, dtype=int)
+
+    for i in range(height):
+        for j in range(width):
+            hist[j] = hist[j] + 1 if mask[i, j] == 1 else 0
+        # Use histogram to find largest rectangle in this row
+        stack = []
+        j = 0
+        while j <= width:
+            h = hist[j] if j < width else 0
+            if not stack or h >= hist[stack[-1]]:
+                stack.append(j)
+                j += 1
+            else:
+                top = stack.pop()
+                w = j if not stack else j - stack[-1] - 1
+                area = hist[top] * w
+                if area > max_area:
+                    max_area = area
+                    x = stack[-1] + 1 if stack else 0
+                    y = i - hist[top] + 1
+                    max_rect = (x, y.item(), w, hist[top].item())
+    return max_rect
 
 
