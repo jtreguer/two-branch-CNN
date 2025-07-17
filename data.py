@@ -9,6 +9,7 @@ import argparse
 import math
 import os
 import pickle
+import psutil
 import rasterio
 import spectral
 from tqdm import tqdm
@@ -20,6 +21,7 @@ from utils import max_inner_rectangle
 class AvirisDataset(torch.utils.data.Dataset):
 
     sigma = 0.5
+    dataset_path = './dataset'
 
     def __init__(self, args, device: torch.device):
         super().__init__()
@@ -27,6 +29,7 @@ class AvirisDataset(torch.utils.data.Dataset):
         self.device = device
         self.subres = int(self.args.patch_size/self.args.scale)
         print(f"Low resolution {self.subres}")
+        self.dataset_filename = f"dataset_training_{self.args.stride}"
         self.sp_matrix = None
         self.wavelengths = None #spaceholder for image spectral wavelenghts
         # load images
@@ -44,11 +47,12 @@ class AvirisDataset(torch.utils.data.Dataset):
         self.test_HRMSI_list = []
         self.test_LRHSI_list = []
         if self.args.train_mode:
-            self.make_set()
-            print("Dataset built")
-            # Supprimer les fréquences de la vapeur d'eau ?
-            # Make tensor lists
-            # In c h w order for the model to digest  
+            if self.dataset_file():
+                self.load_dataset()
+            else:
+                self.make_set()
+                print("Dataset built")
+                self.save_dataset()
             self.GT_tensor_list = self.make_cuda_tensor(self.GT_list, is_spectrum=True)
             self.LRHSI_tensor_list = self.make_cuda_tensor(self.LRHSI_list, is_spectrum=True)
             self.HRMSI_tensor_list = self.make_cuda_tensor(self.HRMSI_list)
@@ -75,6 +79,21 @@ class AvirisDataset(torch.utils.data.Dataset):
                 tensor = torch.from_numpy(arr).float()
             tensor_list.append(tensor)
         return tensor_list
+
+    def dataset_file(self):
+        target_file = os.path.join(self.dataset_path,self.dataset_filename+".pkl")
+        return os.path.isfile(target_file)
+    
+    def save_dataset(self):
+        target_file = os.path.join(self.dataset_path,self.dataset_filename+".pkl")
+        payload = [self.GT_list, self.LRHSI_list, self.HRMSI_list]
+        with open(target_file,"wb") as f:
+            pickle.dump(payload,f)      
+    
+    def load_dataset(self):
+        target_file = os.path.join(self.dataset_path,self.dataset_filename+".pkl")
+        with open(target_file,"rb") as f:
+            self.GT_list, self.LRHSI_list, self.HRMSI_list = pickle.load(f)
 
     def get_image_list(self):
         hdr_files = []
@@ -132,21 +151,23 @@ class AvirisDataset(torch.utils.data.Dataset):
                 for i in tqdm(range(patch_number)):
                     j = math.floor(i / p_col)
                     k = i % p_col
-                    patch = hyperspectral_data[start_row+j*s:start_row+j*s+p,start_col+k*s:start_col+k*s+p,:]
+                    patch = valid_pixels[start_row+j*s:start_row+j*s+p,start_col+k*s:start_col+k*s+p,:]
                     if 0:#(patch == -50).any(): # exclude non valid pixels
                         continue
                     else:
                         # NORMALIZATION at IMAGE LEVEL
                         patch = self.normalize_image(patch,global_min=global_min, global_max=global_max)
-                        self.GT_list.append(patch[centre, centre,:])
+                        self.GT_list.append(patch[centre, centre,:].astype(np.float16))
                         patch_msi = self.make_msi(patch)
-                        self.HRMSI_list.append(patch_msi)
+                        self.HRMSI_list.append(patch_msi.astype(np.float16))
                         patch_hsi = self.make_hsi(patch)
                         patch_hsi = self.upscale_hyperspectral(patch_hsi, method='bicubic')
                         lr_spec  = patch_hsi[centre, centre, :]
-                        self.LRHSI_list.append(lr_spec)
+                        self.LRHSI_list.append(lr_spec.astype(np.float16))
                         self.image_ids.append(image_id) # record from which image the sample comes from
                         patch_count += 1
+                    if i % 100 == 0:
+                        print(f"RAM Used {psutil.virtual_memory().percent}")
                 print(f"Effective number of patches extracted from current last tile {patch_count}")
                 print(f"Total number of patches extracted {len(self.GT_list)}")
         return
@@ -166,16 +187,20 @@ class AvirisDataset(torch.utils.data.Dataset):
                     print('Number of bands:', src.count)
                     c , h, w = hyperspectral_data.shape
                     hyperspectral_data = rearrange(hyperspectral_data,'c h w -> h w c')
-                    valid_pixels = hyperspectral_data[hyperspectral_data >= 0]
+                    x, y, w, h = max_inner_rectangle(hyperspectral_data,-50) # Inner rectangle excluding -50
+                    valid_pixels = hyperspectral_data[y:y+h,x:x+w,:]
+                    print(f"Cropped image shape {valid_pixels.shape}")
                     global_max = np.max(valid_pixels)
                     global_min = np.min(valid_pixels)
+                    print(f"global min and max {global_min}, {global_max}")
+                    c = valid_pixels.shape[-1]
                     header_spectral = spectral.open_image(image_header)
                     self.wavelengths = header_spectral.bands.centers
                     self.sp_matrix = self.get_spectral_response()
-                    hyperspectral_data = self.normalize_image(hyperspectral_data,global_min=global_min, global_max=global_max)
-                    self.test_GT_list.append(hyperspectral_data)
-                    self.test_HRMSI_list.append(self.make_msi(hyperspectral_data))
-                    self.test_LRHSI_list.append(self.make_hsi(hyperspectral_data))
+                    valid_pixels = self.normalize_image(valid_pixels,global_min=global_min, global_max=global_max)
+                    self.test_GT_list.append(valid_pixels)
+                    self.test_HRMSI_list.append(self.make_msi(valid_pixels))
+                    self.test_LRHSI_list.append(self.make_hsi(valid_pixels))
         return self.test_GT_list, self.test_HRMSI_list, self.test_LRHSI_list
 
     def make_msi(self, img):

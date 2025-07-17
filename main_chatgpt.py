@@ -4,16 +4,20 @@ import json
 import numpy as np
 import os
 import pickle
+import psutil
 import time
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from torch.optim import Adam, SGD
 from torch.optim.lr_scheduler import StepLR
+from sys import getsizeof
 from tqdm import tqdm
 
 from model import TwoBranchCNN
-from data import AvirisDataset                 
+from data import AvirisDataset   
+
+
 
 # ------------------------- CLI arguments ------------------------- #
 def get_args():
@@ -24,7 +28,7 @@ def get_args():
     p.add_argument('--image_number', type=int, default=4)
     p.add_argument("--results_dir", type=str, default="runs",help="Where to store checkpoints & logs")
     # training hyper-params
-    p.add_argument("--epochs", type=int, default=50)
+    p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--lr", type=float, default=5e-5)
     p.add_argument("--step_size", type=int, default=100,
@@ -34,7 +38,7 @@ def get_args():
     p.add_argument("--seed", type=int, default=3407)
     # data specifics
     p.add_argument("--patch_size", type=int, default=31)
-    p.add_argument("--stride", type=int, default=31) # 31 means no overlapping between patches
+    p.add_argument("--stride", type=int, default=10) # 31 means no overlapping between patches
     p.add_argument("--training_ratio", type=float, default=0.7)
     p.add_argument('--scale', type=int, default=2)
     p.add_argument('--hsi_bands', type=int, default=224)   
@@ -168,6 +172,8 @@ def main():
                 "scheduler_state": scheduler.state_dict(),
                 "val_loss": best_val
             }, ckpt_path)
+
+       
 
     with open("hist_loss.json", "w") as file:
         json.dump(history, file, indent=4)
