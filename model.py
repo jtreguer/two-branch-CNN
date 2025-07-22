@@ -1,10 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.init as init
 
 class TwoBranchCNN(nn.Module):
-
-    padding = 'valid' # 22 et 5 "same"
 
     def __init__(self, hsi_bands=224, msi_bands=4, patch_size=31):
         """
@@ -18,26 +17,30 @@ class TwoBranchCNN(nn.Module):
         super(TwoBranchCNN, self).__init__()
 
         self.patch_size = patch_size
+        # self.hsi_bands = hsi_bands
+        # self.msi_bands = msi_bands
         
         # HSI branch parameters (1D convolutions)
         self.kernel_1D_size = 45
+        self.padding_1D = self.kernel_1D_size//2
         self.hsi_branch = nn.Sequential(
-            nn.Conv1d(1, 20, kernel_size=self.kernel_1D_size, stride=1, padding=self.padding),  # kernel_size=45x1 # CHECK PADDING !!!
+            nn.Conv1d(1, 20, kernel_size=self.kernel_1D_size, stride=1, padding=self.padding_1D),  # kernel_size=45x1 # CHECK PADDING !!!
             nn.ReLU(),
-            nn.Conv1d(20, 20, kernel_size=self.kernel_1D_size, stride=1, padding=self.padding),
+            nn.Conv1d(20, 20, kernel_size=self.kernel_1D_size, stride=1, padding=self.padding_1D),
             nn.ReLU(),
-            nn.Conv1d(20, 20, kernel_size=self.kernel_1D_size, stride=1, padding=self.padding),
+            nn.Conv1d(20, 20, kernel_size=self.kernel_1D_size, stride=1, padding=self.padding_1D),
             nn.ReLU()
         )
         
         # MSI branch parameters (2D convolutions)
         self.kernel_2D_size = 10
+        self.padding_2D = self.kernel_2D_size//2
         self.msi_branch = nn.Sequential(
-            nn.Conv2d(msi_bands, 30, kernel_size=self.kernel_2D_size, stride=1, padding=self.padding),  # kernel_size=10x10 # CHECK PADDING !!!
+            nn.Conv2d(msi_bands, 30, kernel_size=self.kernel_2D_size, stride=1, padding=self.padding_2D),  # kernel_size=10x10 # CHECK PADDING !!!
             nn.ReLU(),
-            nn.Conv2d(30, 30, kernel_size=self.kernel_2D_size, stride=1, padding=self.padding),
+            nn.Conv2d(30, 30, kernel_size=self.kernel_2D_size, stride=1, padding=self.padding_2D),
             nn.ReLU(),
-            nn.Conv2d(30, 30, kernel_size=self.kernel_2D_size, stride=1, padding=self.padding),
+            nn.Conv2d(30, 30, kernel_size=self.kernel_2D_size, stride=1, padding=self.padding_2D),
             nn.ReLU()
         )
         
@@ -48,21 +51,46 @@ class TwoBranchCNN(nn.Module):
         # Flatten the features
         self.hsi_flatten = nn.Flatten()
         self.msi_flatten = nn.Flatten()
+
+        with torch.no_grad():
+            # shape = (batch=1, channels, H, W) for the *worst* (2D) branch;
+            dummy_hsi = torch.zeros(1, 1, hsi_bands)  
+            dummy_msi = torch.zeros(1, msi_bands, self.patch_size, self.patch_size)
+            # run both branches up to the flatten point:
+            feat_hsi = self.hsi_branch(dummy_hsi)    # e.g. shape (1, C1, L1, 1)
+            feat_msi = self.msi_branch(dummy_msi)    # e.g. shape (1, C2, H2, W2)
+            # concatenate or however you merge them, then flatten:
+            merged = torch.cat([feat_hsi.view(1, -1),
+                                feat_msi.view(1, -1)], dim=1)
+            self.input_layer_size = merged.size(1)
         
         # Fully connected layers
-        self.input_layer_size = 20 * (hsi_bands - 3*(self.kernel_1D_size - 1)) + 30 * (patch_size - 3*(self.kernel_2D_size-1))**2
+        # self.input_layer_size = 20 * (hsi_bands - 3*(self.kernel_1D_size - 1)) + 30 * (patch_size - 3*(self.kernel_2D_size-1))**2
         print(f"size of input layer of FC {self.input_layer_size}")
+
         self.fc_layers = nn.Sequential(
-            nn.Dropout(p=0.3),
             nn.Linear(self.input_layer_size, 450),
-            nn.BatchNorm1d(450),
+            nn.BatchNorm1d(450), # LayerNorm(450)
             nn.ReLU(),
-            nn.Dropout(p=0.3),
+            # nn.Dropout(p=0.0),
             nn.Linear(450, 450),
-            nn.BatchNorm1d(450),
+            nn.BatchNorm1d(450),  # LayerNorm(450)
             nn.ReLU(),
-            nn.Dropout(p=0.3),
+            # nn.Dropout(p=0.0),
             nn.Linear(450, hsi_bands))  # Output is the reconstructed HR HSI spectrum
+        
+        self._init_weights()          # <─ add this line
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, (nn.Conv1d, nn.Conv2d)):
+                init.kaiming_normal_(m.weight, nonlinearity='relu')
+                if m.bias is not None:
+                    init.zeros_(m.bias)
+            elif isinstance(m, nn.Linear):
+                init.xavier_uniform_(m.weight)
+                init.zeros_(m.bias)
+
         
     def forward(self, hsi_input, msi_input):
         """

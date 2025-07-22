@@ -2,3 +2,4 @@ venv/
 images/
 runs/
 *.pkl
+dataset/
