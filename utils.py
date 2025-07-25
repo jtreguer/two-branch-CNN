@@ -25,8 +25,12 @@ class Metric():
       self.PSNR,self.RMSE,self.SAM,self.ERGAS,self.SSIM = [],[],[],[],[]
       if (GT is not None) and (preHSI is not None):
          assert GT.shape == preHSI.shape
-         self.GT = GT.detach().cpu().numpy()
-         self.preHSI = preHSI.detach().cpu().numpy()
+         if type(GT) is np.ndarray and type(preHSI) is np.ndarray:
+            self.GT = GT
+            self.preHSI = preHSI
+         else:
+            self.GT = GT.detach().cpu().numpy()
+            self.preHSI = preHSI.detach().cpu().numpy()
          # Case of lists of tensors
          if len(GT.shape) == 4:
                for i in range(len(self.GT)):
